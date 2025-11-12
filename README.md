@@ -7,8 +7,8 @@ An intelligent, AI-powered chatbot for e-commerce that helps customers find prod
 
 ## ✨ Features
 
-- 🤖 **AI-Powered Chatbot**: Intelligent customer service assistant using Gemini AI (optional) or free alternatives
-- 🔍 **Real Product Search**: Search for products across e-commerce platforms (Flipkart, Amazon)
+- 🤖 **AI-Powered Chatbot**: Intelligent customer service assistant using DeepSeek AI for accurate product recommendations
+- 🔍 **Real Product Search**: Live marketplace results sourced directly from Flipkart and Amazon listings
 - 🖼️ **Product Images**: Display real product images with fallback support
 - 🔗 **Direct Purchase Links**: One-click links to Flipkart and Amazon product pages
 - 💬 **Real-time Chat**: Interactive chat interface with typing animations
@@ -28,8 +28,8 @@ An intelligent, AI-powered chatbot for e-commerce that helps customers find prod
 ### Backend
 - **Flask** - Python web framework
 - **Flask-CORS** - Cross-origin resource sharing
-- **Google Generative AI (Gemini)** - Optional AI responses
-- **DuckDuckGo API** - Free product search
+- **DeepSeek AI** - Advanced LLM for intelligent product recommendations
+- **Live Marketplace Scraping** - Direct product search from Flipkart and Amazon
 - **BeautifulSoup4** - Web scraping support
 - **Requests** - HTTP library
 
@@ -81,13 +81,17 @@ npm install
 
 ### 4. Environment Variables
 
-Create a `.env` file in the `backend` directory:
+Create a `.env` file in the `backend` directory (optional - API key is pre-configured):
 
 ```env
-GOOGLE_API_KEY=your_gemini_api_key_here
+DEEPSEEK_API_KEY=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
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3.1:free
+DEEPSEEK_API_BASE=https://api.skylark.com/v1
+DEEPSEEK_TEMPERATURE=0.7
+DEEPSEEK_MAX_TOKENS=1024
 ```
 
-**Note**: The Gemini API key is optional. The application will work with free alternatives if no API key is provided.
+**Note**: The DeepSeek API key is pre-configured in the code. You can override it via environment variables if needed. The application will work with free alternatives if the API is unavailable.
 
 ## 🎯 Usage
 
@@ -302,10 +306,10 @@ GET /api/products?q=wireless+headphones
 ## 🎨 Features in Detail
 
 ### Product Search
-- Searches using DuckDuckGo API (free, unlimited)
-- Falls back to web-based product templates
+- Scrapes real listings from Flipkart and Amazon with marketplace-specific parsing
+- Falls back to DuckDuckGo and curated templates when marketplaces throttle
 - Extracts price ranges from queries
-- Provides product recommendations
+- Provides product recommendations with direct buy links
 
 ### Product Display
 - Real product images from Unsplash
@@ -325,7 +329,11 @@ GET /api/products?q=wireless+headphones
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_API_KEY` | No | Gemini API key for enhanced AI responses (optional) |
+| `DEEPSEEK_API_KEY` | No | DeepSeek API key (pre-configured, can override via .env) |
+| `DEEPSEEK_MODEL` | No | DeepSeek model to use (default: `deepseek/deepseek-chat-v3.1:free`) |
+| `DEEPSEEK_API_BASE` | No | API base URL (default: `https://api.skylark.com/v1`) |
+| `DEEPSEEK_TEMPERATURE` | No | Controls creativity in responses (default: `0.7`) |
+| `DEEPSEEK_MAX_TOKENS` | No | Max tokens to return (default: `1024`) |
 
 ### CORS Configuration
 
@@ -383,9 +391,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🙏 Acknowledgments
 
-- Google Gemini API for AI capabilities
-- DuckDuckGo for free search API
-- Unsplash for product images
+- DeepSeek AI for advanced LLM capabilities
+- Skylark API for providing DeepSeek access
+- Flipkart and Amazon for product listings
 - React and Flask communities
 
 ## 📞 Support
@@ -400,7 +408,7 @@ Before deploying, make sure you have:
 - [ ] Backend URL noted down
 - [ ] Frontend code pushed to GitHub
 - [ ] Environment variable `REACT_APP_API_URL` set in Vercel
-- [ ] `GOOGLE_API_KEY` set in backend (optional)
+- [ ] `DEEPSEEK_API_KEY` set in backend (pre-configured, optional override)
 - [ ] CORS configured in backend for your frontend domain
 - [ ] Tested locally before deployment
 
@@ -425,5 +433,5 @@ Before deploying, make sure you have:
 
 ---
 
-⭐ If you like this project, please give it a star on GitHub!
+⭐ If you like this project, please give it a star on GitHub! ok
 "# rr" 

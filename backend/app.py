@@ -2,42 +2,16 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import re
-import json
 import requests
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-
-# Try to import Gemini, but make it optional
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    print("⚠ Gemini not available, using free alternatives")
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-
-# Configure Gemini API (optional - will use free alternatives if not available)
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')
-USE_GEMINI = False
-
-if GEMINI_AVAILABLE and GOOGLE_API_KEY:
-    try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        USE_GEMINI = True
-        print("✓ Gemini API configured (will use when available)")
-    except Exception as e:
-        print(f"⚠ Gemini API error: {e}, using free alternatives")
-        USE_GEMINI = False
-else:
-    print("ℹ Using free product search APIs (no API key required)")
-    USE_GEMINI = False
 
 # E-commerce focused system prompt
 SYSTEM_PROMPT = """You are a professional e-commerce customer service assistant. Your role is to:
@@ -53,6 +27,38 @@ IMPORTANT:
 - When products are found, provide helpful information about them
 - Always be friendly, helpful, and professional
 - If asked about non-e-commerce topics, politely redirect to product-related questions"""
+
+# Configure DeepSeek API
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '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')
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-chat-v3.1:free")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.skylark.com/v1")
+USE_DEEPSEEK = False
+
+# DeepSeek generation config
+deepseek_config = {
+    "temperature": float(os.getenv("DEEPSEEK_TEMPERATURE", "0.7")),
+    "max_tokens": int(os.getenv("DEEPSEEK_MAX_TOKENS", "1024")),
+}
+
+if DEEPSEEK_API_KEY and DEEPSEEK_API_KEY.strip():
+    USE_DEEPSEEK = True
+    print(f"✓ DeepSeek API configured")
+    print(f"  Model: {DEEPSEEK_MODEL}")
+    print(f"  API Base: {DEEPSEEK_API_BASE}")
+    print(f"  API Key: {DEEPSEEK_API_KEY[:20]}...{DEEPSEEK_API_KEY[-10:]}")
+else:
+    print("ℹ Using free product search APIs (no API key required)")
+    USE_DEEPSEEK = False
+
+# HTTP headers for scraping e-commerce sites
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 def search_products_duckduckgo(query):
     """Search for products using DuckDuckGo (free, no API key required)"""
@@ -77,7 +83,9 @@ def search_products_duckduckgo(query):
                             "image": topic.get('Icon', {}).get('URL', '') or f"https://via.placeholder.com/300x300/667eea/ffffff?text={quote(product_name[:20])}",
                             "flipkart_link": f"https://www.flipkart.com/search?q={quote(product_name)}",
                             "amazon_link": f"https://www.amazon.in/s?k={quote(product_name)}",
-                            "rating": "4.0+"
+                            "rating": "4.0+",
+                            "source": "DuckDuckGo",
+                            "inStock": True
                         })
                 if products:
                     return products
@@ -163,7 +171,8 @@ def search_products_web(query):
                 'flipkart_link': f"https://www.flipkart.com/search?q={quote(product_name)}",
                 'amazon_link': f"https://www.amazon.in/s?k={quote(product_name)}",
                 'image': image_url,
-                'inStock': True
+                'inStock': True,
+                'source': 'Curated'
             })
         
         return formatted_products
@@ -172,8 +181,210 @@ def search_products_web(query):
         print(f"Web search error: {e}")
         return None
 
+
+def _normalize_price(text):
+    if not text:
+        return "Check website"
+    cleaned = re.sub(r"[^\d.,₹$]", "", text)
+    if cleaned:
+        if cleaned.startswith("₹"):
+            return cleaned if "₹" in text else f"₹{cleaned}"
+        if cleaned.startswith("$"):
+            return cleaned
+        return f"₹{cleaned}"
+    return "Check website"
+
+
+def scrape_flipkart_products(query, limit=5):
+    """Fetch product listings directly from Flipkart search results."""
+    try:
+        params = {"q": query, "otracker": "search"}
+        response = requests.get(
+            "https://www.flipkart.com/search",
+            params=params,
+            headers=DEFAULT_HEADERS,
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        product_cards = soup.select("a._1fQZEK")  # Grid layout
+        if not product_cards:
+            product_cards = soup.select("a.s1Q9rs")  # List layout (e.g. fashion)
+        if not product_cards:
+            product_cards = soup.select("div._4ddWXP a.s1Q9rs")  # Alternate layout
+
+        products = []
+        seen_names = set()
+
+        for anchor in product_cards:
+            name = anchor.get_text(strip=True)
+            if not name or name in seen_names:
+                continue
+
+            seen_names.add(name)
+            href = anchor.get("href")
+            product_url = urljoin("https://www.flipkart.com", href) if href else ""
+
+            card_root = anchor
+            for _ in range(3):
+                if card_root and card_root.name != "div":
+                    card_root = card_root.parent
+
+            price_tag = (
+                card_root.select_one("div._30jeq3") if card_root else None
+            ) or anchor.find_next("div", class_="_30jeq3")
+
+            rating_tag = (
+                card_root.select_one("div._3LWZlK") if card_root else None
+            ) or anchor.find_next("div", class_="_3LWZlK")
+
+            image_tag = (
+                card_root.select_one("img") if card_root else None
+            ) or anchor.find_next("img")
+            image_url = ""
+            if image_tag:
+                image_url = image_tag.get("src") or image_tag.get("data-src") or ""
+                if image_url.startswith("//"):
+                    image_url = "https:" + image_url
+
+            description = ""
+            if card_root:
+                bullets = card_root.select("ul._1xgFaf li")
+                if bullets:
+                    description = "; ".join(b.get_text(strip=True) for b in bullets[:3])
+
+            products.append(
+                {
+                    "name": name,
+                    "price": _normalize_price(price_tag.get_text() if price_tag else ""),
+                    "rating": rating_tag.get_text(strip=True) if rating_tag else "4.0",
+                    "description": description
+                    or "Top listing from Flipkart curated for your search.",
+                    "image": image_url,
+                    "flipkart_link": product_url,
+                    "amazon_link": "",
+                    "source": "Flipkart",
+                    "inStock": True,
+                }
+            )
+
+            if len(products) >= limit:
+                break
+
+        return products
+    except Exception as exc:
+        print(f"Flipkart scrape error: {exc}")
+        return []
+
+
+def scrape_amazon_products(query, limit=5):
+    """Fetch product listings directly from Amazon search results."""
+    try:
+        params = {"k": query, "ref": "nb_sb_noss"}
+        response = requests.get(
+            "https://www.amazon.in/s",
+            params=params,
+            headers={
+                **DEFAULT_HEADERS,
+                "Accept-Encoding": "gzip, deflate, br",
+            },
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        result_cards = soup.select('div.s-main-slot div[data-component-type="s-search-result"]')
+
+        products = []
+        seen_names = set()
+
+        for card in result_cards:
+            title_tag = card.select_one("h2 a span")
+            if not title_tag:
+                continue
+            name = title_tag.get_text(strip=True)
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+
+            link_tag = card.select_one("h2 a")
+            product_url = (
+                urljoin("https://www.amazon.in", link_tag.get("href"))
+                if link_tag and link_tag.get("href")
+                else ""
+            )
+
+            price_whole = card.select_one("span.a-price span.a-price-whole")
+            price_fraction = card.select_one("span.a-price span.a-price-fraction")
+            price_text = ""
+            if price_whole:
+                price_text = price_whole.get_text(strip=True)
+                if price_fraction:
+                    price_text += price_fraction.get_text(strip=True)
+
+            rating_tag = card.select_one("span.a-icon-alt")
+            image_tag = card.select_one("img.s-image")
+            image_url = ""
+            if image_tag:
+                image_url = image_tag.get("src") or image_tag.get("data-src") or ""
+                if image_url.startswith("//"):
+                    image_url = "https:" + image_url
+            description = ""
+
+            bullets = card.select("div.a-section.a-spacing-small.a-spacing-top-small span.a-text-normal")
+            if bullets:
+                description = " ".join(b.get_text(strip=True) for b in bullets[:2])
+
+            products.append(
+                {
+                    "name": name,
+                    "price": _normalize_price(price_text),
+                    "rating": rating_tag.get_text(strip=True).split()[0] if rating_tag else "4.0",
+                    "description": description or "Popular Amazon listing tailored to your request.",
+                    "image": image_url,
+                    "flipkart_link": "",
+                    "amazon_link": product_url,
+                    "source": "Amazon",
+                    "inStock": True,
+                }
+            )
+
+            if len(products) >= limit:
+                break
+
+        return products
+    except Exception as exc:
+        print(f"Amazon scrape error: {exc}")
+        return []
+
 def search_real_products(query):
     """Search for real products using free APIs (no API key required)"""
+    # Try direct marketplace scraping first for higher accuracy
+    flipkart_products = scrape_flipkart_products(query, limit=4)
+    amazon_products = scrape_amazon_products(query, limit=4)
+
+    combined_products = []
+    seen_names = set()
+
+    for product in flipkart_products + amazon_products:
+        key = (product["name"], product.get("source"))
+        if key in seen_names:
+            continue
+        seen_names.add(key)
+        # Ensure both marketplace links exist where possible
+        if product.get("source") == "Flipkart" and not product.get("amazon_link"):
+            product["amazon_link"] = f"https://www.amazon.in/s?k={quote(product['name'])}"
+        if product.get("source") == "Amazon" and not product.get("flipkart_link"):
+            product["flipkart_link"] = f"https://www.flipkart.com/search?q={quote(product['name'])}"
+        combined_products.append(product)
+
+    if combined_products:
+        return combined_products
+
     # Try DuckDuckGo first (completely free)
     products = search_products_duckduckgo(query)
     if products:
@@ -195,6 +406,8 @@ def generate_template_response(user_message, products):
             response += f"**{product.get('name', 'Product')}**\n"
             response += f"Price: {product.get('price', 'Check website')}\n"
             response += f"Rating: {product.get('rating', 'N/A')} ⭐\n"
+            if product.get("source"):
+                response += f"Source: {product['source']}\n"
             response += f"{product.get('description', '')}\n\n"
         response += "💡 **Tip:** Click the 'Buy on Flipkart' or 'Buy on Amazon' buttons below each product to view more details, compare prices, and make a purchase!\n\n"
         response += "All products come with secure payment options and reliable delivery. Happy shopping! 🛍️"
@@ -205,6 +418,101 @@ def generate_template_response(user_message, products):
         response += "How else can I assist you today? 😊"
     
     return response
+
+
+def generate_deepseek_response(user_message, products):
+    """Create a DeepSeek-powered response when API access is available."""
+    if not USE_DEEPSEEK or not DEEPSEEK_API_KEY:
+        print("⚠ DeepSeek not available - USE_DEEPSEEK:", USE_DEEPSEEK, "API_KEY exists:", bool(DEEPSEEK_API_KEY))
+        return None
+
+    try:
+        print(f"🔄 Calling DeepSeek API with model: {DEEPSEEK_MODEL}")
+        product_context = []
+        for idx, product in enumerate(products[:5], start=1):
+            product_context.append(
+                f"""{idx}. {product.get('name', 'Product')}
+   Price: {product.get('price', 'Check website')}
+   Rating: {product.get('rating', 'N/A')}
+   Description: {product.get('description', 'No description available')}
+   Flipkart: {product.get('flipkart_link', 'N/A')}
+   Amazon: {product.get('amazon_link', 'N/A')}"""
+            )
+
+        product_block = "\n".join(product_context) if product_context else "No exact matches found yet."
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "User query:\n"
+                    f"{user_message}\n\n"
+                    "Product findings from live marketplace searches:\n"
+                    f"{product_block}\n\n"
+                    "Compose a concise, customer-friendly reply that:\n"
+                    "1. Recommends the most relevant options.\n"
+                    "2. Highlights differentiators, pricing, and availability hints.\n"
+                    "3. Encourages the shopper to review the provided Flipkart/Amazon links.\n"
+                    "4. Offers next-step guidance or alternative suggestions if needed.\n"
+                )
+            }
+        ]
+
+        payload = {
+            "model": DEEPSEEK_MODEL,
+            "messages": messages,
+            "temperature": deepseek_config["temperature"],
+            "max_tokens": deepseek_config["max_tokens"],
+        }
+
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        api_url = f"{DEEPSEEK_API_BASE}/chat/completions"
+        print(f"📡 API URL: {api_url}")
+        
+        response = requests.post(
+            api_url,
+            json=payload,
+            headers=headers,
+            timeout=30,
+        )
+
+        print(f"📥 Response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"✅ API Response received: {list(result.keys())}")
+            if "error" in result:
+                print(f"❌ DeepSeek API error in response: {result.get('error', {})}")
+                return None
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0].get("message", {}).get("content", "")
+                if content:
+                    print(f"✅ DeepSeek response generated successfully ({len(content)} chars)")
+                    return content.strip()
+                else:
+                    print("⚠️ No content in API response choices")
+            else:
+                print(f"⚠️ No choices in API response. Response keys: {list(result.keys())}")
+        else:
+            try:
+                error_data = response.json()
+                print(f"❌ DeepSeek API error: {response.status_code} - {error_data}")
+            except:
+                print(f"❌ DeepSeek API error: {response.status_code} - {response.text[:200]}")
+
+    except Exception as exc:
+        error_msg = str(exc).lower()
+        if "429" in error_msg or "quota" in error_msg:
+            print("⚠ DeepSeek quota exceeded, switching to template response.")
+        else:
+            print(f"DeepSeek response error: {exc}")
+
+    return None
 
 def create_fallback_products(query):
     """Create fallback product results with search links"""
@@ -221,7 +529,8 @@ def create_fallback_products(query):
             "flipkart_link": f"https://www.flipkart.com/search?q={query_encoded}",
             "amazon_link": f"https://www.amazon.in/s?k={query_encoded}",
             "rating": "4.0+",
-            "inStock": True
+            "inStock": True,
+            "source": "Search"
         })
     
     return products
@@ -340,8 +649,6 @@ PRODUCTS = [
     }
 ]
 
-chat_history = []
-
 def search_products_legacy(query):
     """Search products by name, category, or description with improved matching"""
     query_lower = query.lower()
@@ -459,40 +766,12 @@ def chat():
         if found_products:
             print(f"Products: {[p['name'] for p in found_products]}")
         
-        # Generate response (use Gemini if available, otherwise use template)
-        if USE_GEMINI:
-            try:
-                model = genai.GenerativeModel('gemini-2.5-pro')
-                product_info = ""
-                if found_products:
-                    product_info = "\n\nFound Products:\n"
-                    for i, product in enumerate(found_products[:5], 1):
-                        product_info += f"{i}. {product.get('name', 'Product')} - {product.get('price', 'Price available on website')}\n"
-                        product_info += f"   Description: {product.get('description', '')}\n"
-                        product_info += f"   Rating: {product.get('rating', 'N/A')}\n\n"
-                
-                enhanced_prompt = f"""{SYSTEM_PROMPT}
+        # Generate response (use DeepSeek if available, otherwise use template)
+        response_text = None
+        if USE_DEEPSEEK:
+            response_text = generate_deepseek_response(user_message, found_products)
 
-{product_info}
-
-User Question: {user_message}
-
-Please provide a helpful response about the products. Include:
-1. Product recommendations based on the query
-2. Key features and benefits
-3. Mention that users can click the product links to view on Flipkart or Amazon
-4. Be friendly and helpful
-
-Assistant Response:"""
-                
-                response = model.generate_content(enhanced_prompt)
-                response_text = response.text if response.text else generate_template_response(user_message, found_products)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if '429' in error_msg or 'quota' in error_msg:
-                    print("⚠ Gemini quota exceeded, using free response")
-                response_text = generate_template_response(user_message, found_products)
-        else:
+        if not response_text:
             # Use free template response
             response_text = generate_template_response(user_message, found_products)
         
@@ -524,7 +803,7 @@ Assistant Response:"""
         # Check for API key errors
         elif '401' in error_message or '403' in error_message or 'API key' in error_message:
             return jsonify({
-                'response': '⚠️ API Key Error: Please check your Google API key in the .env file.',
+                'response': '⚠️ API Key Error: Please check your DeepSeek API key in the .env file.',
                 'error': 'api_key_error',
                 'products': []
             }), 200
