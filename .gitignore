@@ -43,3 +43,7 @@ ENV/
 # Vercel
 .vercel
 
+venv/
+node_modules/
+.env
+__pycache__/

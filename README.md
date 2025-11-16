@@ -40,6 +40,7 @@ Before you begin, ensure you have the following installed:
 - **Python** (v3.8 or higher)
 - **pip** (Python package manager)
 - **npm** or **yarn** (Node package manager)
+- **Docker** and **Docker Compose** (optional, for containerized deployment)
 
 ## 🛠️ Installation
 
@@ -92,6 +93,124 @@ DEEPSEEK_MAX_TOKENS=1024
 ```
 
 **Note**: The DeepSeek API key is pre-configured in the code. You can override it via environment variables if needed. The application will work with free alternatives if the API is unavailable.
+
+## 🐳 Docker Setup (Recommended)
+
+Docker provides an easy way to run the entire application with all dependencies configured automatically.
+
+### Prerequisites for Docker
+- **Docker Desktop** installed on your system ([Download Docker](https://www.docker.com/products/docker-desktop))
+- **Docker Compose** (included with Docker Desktop)
+
+### Quick Start with Docker
+
+1. **Clone the repository** (if not already done):
+   ```bash
+   git clone https://github.com/yourusername/AI-Driven-Customer-Support-Assistan.git
+   cd AI-Driven-Customer-Support-Assistan
+   ```
+
+2. **Create environment file** (optional - defaults are pre-configured):
+   ```bash
+   # Create .env file in root directory (optional)
+   # You can also set environment variables directly in docker-compose.yml
+   ```
+
+3. **Build and start containers**:
+   ```bash
+   docker-compose up --build
+   ```
+   
+   This will:
+   - Build the backend Docker image
+   - Build the frontend Docker image
+   - Start both services
+   - Create a network for communication between services
+
+4. **Access the application**:
+   - Frontend: `http://localhost:3000`
+   - Backend API: `http://localhost:5000`
+
+### Docker Commands
+
+**Start services in detached mode:**
+```bash
+docker-compose up -d
+```
+
+**View logs:**
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f backend
+docker-compose logs -f frontend
+```
+
+**Stop services:**
+```bash
+docker-compose down
+```
+
+**Stop and remove volumes:**
+```bash
+docker-compose down -v
+```
+
+**Rebuild containers (after code changes):**
+```bash
+docker-compose up --build
+```
+
+**Restart a specific service:**
+```bash
+docker-compose restart backend
+docker-compose restart frontend
+```
+
+### Docker Configuration
+
+The project includes:
+- **`backend/Dockerfile`**: Python Flask backend container
+- **`frontend/Dockerfile`**: React frontend with Nginx (multi-stage build)
+- **`docker-compose.yml`**: Orchestrates both services
+
+### Environment Variables in Docker
+
+You can set environment variables in `docker-compose.yml` or create a `.env` file in the root directory:
+
+```env
+DEEPSEEK_API_KEY=your-api-key-here
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3.1:free
+DEEPSEEK_API_BASE=https://api.skylark.com/v1
+DEEPSEEK_TEMPERATURE=0.7
+DEEPSEEK_MAX_TOKENS=1024
+```
+
+### Docker Troubleshooting
+
+**Port already in use:**
+```bash
+# Edit docker-compose.yml to change ports
+# For example, change "3000:80" to "3001:80" for frontend
+```
+
+**Container won't start:**
+```bash
+# Check logs
+docker-compose logs
+
+# Rebuild from scratch
+docker-compose down
+docker-compose build --no-cache
+docker-compose up
+```
+
+**Clear Docker cache:**
+```bash
+docker system prune -a
+```
 
 ## 🎯 Usage
 
@@ -248,6 +367,7 @@ AI-Driven-Customer-Support-Assistan/
 ├── backend/
 │   ├── app.py                 # Flask backend server
 │   ├── requirements.txt       # Python dependencies
+│   ├── Dockerfile             # Backend Docker configuration
 │   └── .env                  # Environment variables (create this)
 │
 ├── frontend/
@@ -259,8 +379,10 @@ AI-Driven-Customer-Support-Assistan/
 │   │   ├── App.js            # Main app component
 │   │   └── index.js          # Entry point
 │   ├── package.json          # Node dependencies
-│   └── package-lock.json
+│   ├── package-lock.json
+│   └── Dockerfile             # Frontend Docker configuration
 │
+├── docker-compose.yml         # Docker Compose configuration
 ├── README.md                 # This file
 └── LICENSE                   # License file
 ```
@@ -404,13 +526,14 @@ For support, email your-email@example.com or open an issue in the repository.
 
 Before deploying, make sure you have:
 
-- [ ] Backend deployed to Railway/Render/Heroku
+- [ ] Backend deployed to Railway/Render/Heroku (or use Docker)
 - [ ] Backend URL noted down
 - [ ] Frontend code pushed to GitHub
 - [ ] Environment variable `REACT_APP_API_URL` set in Vercel
 - [ ] `DEEPSEEK_API_KEY` set in backend (pre-configured, optional override)
 - [ ] CORS configured in backend for your frontend domain
 - [ ] Tested locally before deployment
+- [ ] Docker setup tested (if using Docker deployment)
 
 ## 🚀 Quick Deploy Steps
 

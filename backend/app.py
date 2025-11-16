@@ -816,4 +816,5 @@ def chat():
             }), 200
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    # Bind to 0.0.0.0 to allow connections from Docker containers
+    app.run(debug=True, host='0.0.0.0', port=5000) 

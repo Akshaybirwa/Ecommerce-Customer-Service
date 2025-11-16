@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ecommerce-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-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}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek/deepseek-chat-v3.1:free}
+      - DEEPSEEK_API_BASE=${DEEPSEEK_API_BASE:-https://api.skylark.com/v1}
+      - DEEPSEEK_TEMPERATURE=${DEEPSEEK_TEMPERATURE:-0.7}
+      - DEEPSEEK_MAX_TOKENS=${DEEPSEEK_MAX_TOKENS:-1024}
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+    networks:
+      - ecommerce-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - REACT_APP_API_URL=http://localhost:5000
+    container_name: ecommerce-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - ecommerce-network
+
+networks:
+  ecommerce-network:
+    driver: bridge
+
